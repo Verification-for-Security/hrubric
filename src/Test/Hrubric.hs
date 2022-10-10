@@ -101,11 +101,12 @@ sanity cs
 -- as a pass or fail.
 sane :: Criteria -> Bool
 sane [] = True
-sane c  = all (range . weight) c && cmp total 1
+sane c  = all inRange weights && cmp total 1
   where
-    range f = 0 <= f && f <= 1
+    inRange f = 0 <= f && f <= 1
 
-    total = sum . map weight $ c
+    total = sum weights
+    weights = map weight c
 
     -- Adjust for floating point errors
     cmp x y = abs (x-y) < 0.0001
