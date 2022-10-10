@@ -1,0 +1,55 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.0.
+--
+-- see: https://github.com/sol/hpack
+
+name:           hrubric
+version:        0.1.0.0
+synopsis:       Auto-grade support for Hspec
+description:    Please see the README on GitHub at <https://github.com/RobinWebbers/HRubric#readme>
+category:       Testing
+homepage:       https://github.com/RobinWebbers/hrubric#readme
+bug-reports:    https://github.com/RobinWebbers/hrubric/issues
+author:         Robin Webbers
+maintainer:     robin_webbers_1@hotmail.com
+copyright:      2022 Robin Webbers
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    README.md
+    CHANGELOG.md
+
+source-repository head
+  type: git
+  location: https://github.com/RobinWebbers/hrubric
+
+library
+  exposed-modules:
+      Test.Hrubric
+  other-modules:
+      Paths_hrubric
+  hs-source-dirs:
+      src
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
+  build-depends:
+      base >=4.7 && <5
+    , hspec >=2.10.6
+    , mtl
+  default-language: Haskell2010
+
+test-suite HRubric-test
+  type: exitcode-stdio-1.0
+  main-is: Spec.hs
+  other-modules:
+      Paths_hrubric
+  hs-source-dirs:
+      test
+  ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+      base >=4.7 && <5
+    , hrubric
+    , hspec
+    , mtl
+  default-language: Haskell2010
