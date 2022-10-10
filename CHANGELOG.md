@@ -8,4 +8,7 @@ and this project adheres to the
 
 ## Unreleased
 
-## 0.1.0.0 - YYYY-MM-DD
+## 0.1.0.0 - 2022-10-10
+
+Added Rubric monad to nest rubrics, similar to Spec from hspec
+Added Runners for the Rubric, which allows users to grade code
