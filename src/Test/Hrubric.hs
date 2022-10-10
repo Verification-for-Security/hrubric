@@ -83,12 +83,6 @@ grade criteria result = check (expand criteria) (specResultItems result)
         -- calculate the weigth, append name and recursively expand paths
         recurse g p c = expand' (g * weight c, p ++ [name c]) (nodes c)
 
-
--- sanity :: Criterion -> Either [String] ()
--- sanity (Criterion n _ cs)
---   | sane cs   = foldM (\_ -> sanity) (()) cs
---   | otherwise = Left [n]
-
 sanity :: Criteria -> Either [String] ()
 sanity cs
   | sane cs   = foldlM' (\_ -> sanity . nodes) cs
