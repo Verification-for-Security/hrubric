@@ -10,13 +10,15 @@ a Haskell programming assignment!
 rubric :: Rubric
 rubric = do
   criterion "Nested" 0.8 . distribute $ do
-    distributed "fn0" . passOrFail $ do
+    dcriterion "fn0" . passOrFail $ do
       it "bogus0" $ do
         True `shouldBe` True
       it "bogus1" $ do
         False `shouldBe` True
-    distributed "fn1" . passOrFail $ do
-      it "bogus0" $ do
+    dcriterion "fn1" $ do
+      dpasses "bogus0" $ do
+        True `shouldBe` True
+      dpasses "bogus0" $ do
         True `shouldBe` True
   criterion "fn2" 0.2 $ do
     passes "bogus0" 0.3 $ do
