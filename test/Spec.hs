@@ -4,13 +4,13 @@ import Test.Hrubric
 -- normal rubric, should evaluate to
 rubric0 :: Rubric
 rubric0 = do
-  criterion "Nested" 0.8 . distribute $ do
-    distributed "fn0" . passOrFail $ do
+  criterion "Nested" 0.7 . distribute $ do
+    dcriterion "fn0" . passOrFail $ do
       it "bogus0" $ do
         True `shouldBe` True
       it "bogus1" $ do
         False `shouldBe` True
-    distributed "fn1" . passOrFail $ do
+    dcriterion "fn1" . passOrFail $ do
       it "bogus0" $ do
         True `shouldBe` True
   criterion "fn2" 0.2 $ do
@@ -18,6 +18,11 @@ rubric0 = do
       True `shouldBe` True
     passes "bogues1" 0.7 $ do
       False `shouldBe` True
+  criterion "fn3" 0.1 . distribute $ do
+    dpasses "bogus0" $ do
+      True `shouldBe` True
+    dpasses "bogus1" $ do
+      True `shouldBe` True
 
 -- bad rubric, should crash on assembly
 rubric1 :: Rubric
@@ -33,7 +38,7 @@ rubric1 = do
 tests :: Spec
 tests = do
   it "runs a passing rubric with correct grade" $ do
-    hrubric rubric0 `shouldReturn` Right 0.46
+    hrubric rubric0 `shouldReturn` Right 0.51
   it "fails early on a bad rubric" $ do
     hrubric rubric1 `shouldReturn` Left "Upper"
 

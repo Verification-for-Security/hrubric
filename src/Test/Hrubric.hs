@@ -10,8 +10,9 @@ module Test.Hrubric
   , Rubric
   , hrubric
   , criterion
-  , distributed
   , passes
+  , dcriterion
+  , dpasses
   , distribute
   , passOrFail
   ) where
@@ -171,14 +172,17 @@ criterion n w (RubricM c s) = RubricM c' (describe n s)
 -- A shorthand for a criterion where the points will be
 -- distributed later on by `distribute`. (this will award
 -- NaN points)
-distributed :: HasCallStack => String -> RubricM s a -> RubricM s a
-distributed = flip criterion (0/0)
+dcriterion :: HasCallStack => String -> RubricM s a -> RubricM s a
+dcriterion = flip criterion (0/0)
 
 -- A test that awards points. Like HSpec `it` but with points.
 passes :: (HasCallStack, Example s) => String -> Float -> s -> RubricM (Arg s) ()
 passes n w s = RubricM (writer ((), [crit])) (it n s)
   where
     crit = Criterion n w []
+
+dpasses :: (HasCallStack, Example s) => String -> s -> RubricM (Arg s) ()
+dpasses = flip passes (0/0)
 
 -- Distribute points among the current level of items.
 distribute :: RubricM s a -> RubricM s a
