@@ -3,7 +3,7 @@ module Test.Hrubric
   , Criterion (..)
   , grade
 
-  , RubricM
+  , RubricM (..)
   , runRubricM
   , evalRubricM
 
@@ -27,13 +27,13 @@ import Control.Monad.Writer
 import Control.Monad.Except
 import Control.Arrow
 
--- The list of criteria in a rubric.
+-- | The list of criteria in a rubric.
 -- The final weigth of the criteria
 -- should add up to 1.0 (or just be
 -- distribute for all instances)
 type Criteria = [Criterion]
 
--- A criterion in a rubric. Contains
+-- | A criterion in a rubric. Contains
 -- nested rubrics in a tree to place
 -- weights on sub-criteria
 data Criterion = Criterion
@@ -47,7 +47,7 @@ data Criterion = Criterion
 -- A path to a test
 type Path = [String]
 
--- Award a grade for the results given a rubric
+-- | Award a grade for the results given a rubric
 grade :: Criteria -> SpecResult -> Float
 grade criteria result = check (expand criteria) (specResultItems result)
   where
@@ -84,6 +84,9 @@ grade criteria result = check (expand criteria) (specResultItems result)
         -- calculate the weigth, append name and recursively expand paths
         recurse g p c = expand' (g * weight c, p ++ [name c]) (nodes c)
 
+-- | Do a sanity check on the criteria, returning
+-- a path to the set of criteria that do not match
+-- if this exists.
 sanity :: Criteria -> Either [String] ()
 sanity cs
   | sane cs   = foldlM' (\_ -> sanity . nodes) cs
@@ -96,7 +99,7 @@ sanity cs
       where
         c x k z = left (name x :) (f z x) >>= k
 
--- Check sanity (i.e. total weight of 1) of one
+-- | Check sanity (i.e. total weight of 1) of one
 -- layer in the tree (so no recursive check)
 -- Empty tree is always sane, as it is treated
 -- as a pass or fail.
@@ -112,7 +115,7 @@ sane c  = all inRange weights && cmp total 1
     -- Adjust for floating point errors
     cmp x y = abs (x-y) < 0.0001
 
--- We cannot stack monads on SpecM, because we cannot
+-- | We cannot stack monads on SpecM, because we cannot
 -- call runSpecM on a SpecM Rubric (only on SpecM ()
 -- which means there is no way to get the rubric out
 -- of the WriterT monad when SpecM is stacked into
@@ -140,6 +143,8 @@ instance Monad (RubricM a) where
       r'' = writer (b, w <> w')
       s''  = s >> s'
 
+-- | Run the full rubric, this can be compared
+-- to the hspec function.
 hrubric :: Rubric -> IO (Either String Float)
 hrubric rubric = runExceptT $ do
   args <- liftIO getArgs
@@ -149,33 +154,33 @@ hrubric rubric = runExceptT $ do
   result <- liftIO . withArgs [] $ runSpecForest forest cfg'
   return $ grade criteria result
 
--- Run the rubric monad
+-- | Run the rubric monad
 runRubricM :: RubricM s a -> Either String ((a, Criteria), SpecWith s)
 runRubricM (RubricM c s) = do
   let (a, c') = runWriter c
   left (intercalate ".") $ sanity c'
   return ((a, c'), s)
 
--- Run the rubric monad, but get only the criteria
+-- | Run the rubric monad, but get only the criteria
 evalRubricM :: RubricM s a -> Either String (Criteria, SpecWith s)
 evalRubricM rubric = do
   ((_, c), s) <- runRubricM rubric
   return (c, s)
 
--- Set up a criterion in the rubric. Like HSpec `describe` but with points.
+-- | Set up a criterion in the rubric. Like HSpec `describe` but with points.
 criterion :: HasCallStack => String -> Float -> RubricM s a -> RubricM s a
 criterion n w (RubricM c s) = RubricM c' (describe n s)
   where
     (a, criteria) = runWriter c
     c' = writer (a, [Criterion n w criteria])
 
--- A shorthand for a criterion where the points will be
+-- | A shorthand for a criterion where the points will be
 -- distributed later on by `distribute`. (this will award
 -- NaN points)
 dcriterion :: HasCallStack => String -> RubricM s a -> RubricM s a
 dcriterion = flip criterion (0/0)
 
--- A test that awards points. Like HSpec `it` but with points.
+-- | A test that awards points. Like HSpec `it` but with points.
 passes :: (HasCallStack, Example s) => String -> Float -> s -> RubricM (Arg s) ()
 passes n w s = RubricM (writer ((), [crit])) (it n s)
   where
@@ -184,7 +189,7 @@ passes n w s = RubricM (writer ((), [crit])) (it n s)
 dpasses :: (HasCallStack, Example s) => String -> s -> RubricM (Arg s) ()
 dpasses = flip passes (0/0)
 
--- Distribute points among the current level of items.
+-- | Distribute points among the current level of items.
 distribute :: RubricM s a -> RubricM s a
 distribute (RubricM r s) = RubricM (writer (a, criteria')) s
   where
@@ -192,7 +197,7 @@ distribute (RubricM r s) = RubricM (writer (a, criteria')) s
     w = 1 / (fromIntegral . length) criteria
     criteria' = map (\r' -> r' { weight = w }) criteria
 
--- A combinator that transforms an HSpec SpecWith into a pass-or-fail rubric.
+-- | A combinator that transforms an HSpec SpecWith into a pass-or-fail rubric.
 -- So this awards full points iff all tests passed.
 passOrFail :: SpecWith s -> RubricM s ()
-passOrFail s = RubricM (writer ((), [])) s
+passOrFail = RubricM (writer ((), []))
