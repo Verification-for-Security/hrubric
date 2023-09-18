@@ -22,10 +22,11 @@ import Test.Hspec.Runner hiding (Path)
 import System.Environment
 
 import Data.List (foldl', isPrefixOf, intercalate)
+import Data.Maybe (isJust)
 
 import Control.Monad.Writer
-import Control.Monad.Except
 import Control.Arrow
+import Control.Applicative (empty, (<|>))
 
 -- | The list of criteria in a rubric.
 -- The final weigth of the criteria
@@ -70,19 +71,19 @@ grade criteria result = check (expand criteria) (specResultItems result)
     subpath :: Path -> ResultItem -> Bool
     subpath p q = do
       let (q', n) = resultItemPath q
-      isPrefixOf p (q' ++ [n])
+      p `isPrefixOf` (q' <> [n])
 
     -- Expand criteria to a list of all tests paths and their weights
     expand :: Criteria -> [(Float, Path)]
     expand = expand' (1.0, [])
       where
         expand' :: (Float, Path) -> Criteria -> [(Float, Path)]
-        expand' tup []        = [tup]
-        expand' (g, p) (c:[]) = recurse g p c
-        expand' (g, p) (c:cs) = recurse g p c ++ expand' (g, p) cs
+        expand' tup [] = [tup]
+        expand' (g, p) [c] = recurse g p c
+        expand' (g, p) (c:cs) = recurse g p c <> expand' (g, p) cs
 
         -- calculate the weigth, append name and recursively expand paths
-        recurse g p c = expand' (g * weight c, p ++ [name c]) (nodes c)
+        recurse g p c = expand' (g * weight c, p <> [name c]) (nodes c)
 
 -- | Do a sanity check on the criteria, returning
 -- a path to the set of criteria that do not match
@@ -138,34 +139,39 @@ instance Monad (RubricM a) where
     where
       ~(a, w ) = runWriter r
       RubricM r' s' = f a
-      ~(b, w') = runWriter $ r'
-   
+      ~(b, w') = runWriter r'
+
       r'' = writer (b, w <> w')
       s''  = s >> s'
 
 -- | Run the full rubric, this can be compared
 -- to the hspec function.
-hrubric :: Rubric -> IO (Either String Float)
-hrubric rubric = runExceptT $ do
-  args <- liftIO getArgs
-  cfg <- liftIO $ readConfig defaultConfig args
-  (criteria, spec) <- liftEither $ evalRubricM rubric
+hrubric :: Rubric -> IO (Maybe Float)
+hrubric rubric = do
+  args <- getArgs
+  cfg <- readConfig defaultConfig args
+  let (criteria, spec) = evalRubricM rubric
   (cfg', forest) <- liftIO $ evalSpec cfg spec
   result <- liftIO . withArgs [] $ runSpecForest forest cfg'
-  return $ grade criteria result
+  return $ if isJust (configFilterPredicate cfg <|> configSkipPredicate cfg)
+    then empty
+    else return $ grade criteria result
 
 -- | Run the rubric monad
-runRubricM :: RubricM s a -> Either String ((a, Criteria), SpecWith s)
-runRubricM (RubricM c s) = do
-  let (a, c') = runWriter c
-  left (intercalate ".") $ sanity c'
-  return ((a, c'), s)
+runRubricM :: RubricM s a -> ((a, Criteria), SpecWith s)
+runRubricM (RubricM c s) = ((a, c'), s')
+  where
+    s' = case ret of
+      Right _ -> s
+      Left path -> runIO . fail $ "Sum of weight in child rubrics was not 1 for '" <> path <> "'"
+    (a, c') = runWriter c
+    ret = left (intercalate ".") $ sanity c'
 
 -- | Run the rubric monad, but get only the criteria
-evalRubricM :: RubricM s a -> Either String (Criteria, SpecWith s)
-evalRubricM rubric = do
-  ((_, c), s) <- runRubricM rubric
-  return (c, s)
+evalRubricM :: RubricM s a -> (Criteria, SpecWith s)
+evalRubricM rubric = (c, s)
+  where
+    ((_, c), s) = runRubricM rubric
 
 -- | Set up a criterion in the rubric. Like HSpec `describe` but with points.
 criterion :: HasCallStack => String -> Float -> RubricM s a -> RubricM s a
