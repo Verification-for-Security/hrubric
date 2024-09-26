@@ -1,3 +1,5 @@
 .stack-work/
-*.yaml.lock
+dist-newstyle
+result
 *~
+.DS_Store

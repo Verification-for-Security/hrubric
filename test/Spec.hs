@@ -3,7 +3,7 @@ import Test.Hrubric
 
 import System.Environment
 
--- normal rubric, should evaluate to
+-- | normal rubric, should evaluate to
 rubric0 :: Rubric
 rubric0 = do
   criterion "Nested" 0.7 . distribute $ do
@@ -26,7 +26,7 @@ rubric0 = do
     dpasses "bogus1" $ do
       True `shouldBe` True
 
--- bad rubric, should crash on assembly
+-- | bad rubric, should crash on assembly
 rubric1 :: Rubric
 rubric1 = do
   criterion "Upper" 1.0 $ do

@@ -3,9 +3,9 @@ module Test.Hrubric
   , Criterion (..)
   , grade
 
-  , RubricM (..)
-  , runRubricM
-  , evalRubricM
+  , RubricM
+  , runRubric
+  , evalRubric
 
   , Rubric
   , hrubric
@@ -13,15 +13,19 @@ module Test.Hrubric
   , passes
   , dcriterion
   , dpasses
+  , bcriterion
+  , bpasses
   , distribute
   , passOrFail
   ) where
 
 import Test.Hspec
+import Test.Hspec.Core.Spec
 import Test.Hspec.Runner hiding (Path)
 import System.Environment
 
-import Data.List (foldl', isPrefixOf, intercalate)
+import Data.IORef
+import Data.List (isPrefixOf, intercalate)
 import Data.Maybe (isJust)
 
 import Control.Monad.Writer
@@ -38,34 +42,46 @@ type Criteria = [Criterion]
 -- nested rubrics in a tree to place
 -- weights on sub-criteria
 data Criterion = Criterion
-  { name   :: String
+  { name :: String
+  -- Name of this criterion. Useful to trace incorrectness in rubrics.
   , weight :: Float
-  -- Empty rubric means pass or fail
+  -- ^ The weight of this criterion.
+  , base :: Float
+  -- ^ Base line on the grade. Example would be for multiple choice, where we
+  -- want to correct the grade to account for guesses. If we had 4 choices per
+  -- question, we would set the base to 0.25. I.e. if you have 25% of this
+  -- rubric correct, you get 0 pts.
   , nodes  :: Criteria
+  -- ^ Empty rubric means pass or fail
   }
   deriving (Show, Eq)
 
--- A path to a test
+-- | A path to a test
 type Path = [String]
 
--- | Award a grade for the results given a rubric
-grade :: Criteria -> SpecResult -> Float
-grade criteria result = check (expand criteria) (specResultItems result)
+grade :: Criterion -> SpecResult -> Float
+grade criteria result = recurse [] criteria
   where
-    -- Check all paths of the rubric against the results
-    check :: [(Float, Path)] -> [ResultItem] -> Float
-    check rs is = foldl' (\g r -> g + award r is) 0 rs
+    items = specResultItems result
 
-    -- Award points if the result items that match all passed
-    award :: (Float, Path) -> [ResultItem] -> Float
-    award (g, p) is = do
-      let matches = filter (subpath p) is
-      -- No points if there is a failure.
-      -- A test case wasn't run if there were no matches,
-      -- so we don't award points in that case.
-      if null matches || any resultItemIsFailure matches
+    recurse path Criterion { nodes = [], weight, name } = do
+      let path' = path <> [name]
+      let matches = filter (subpath path') items
+      let isSucces item = case resultItemStatus item of
+            ResultItemSuccess -> True
+            _ -> False
+      -- No points if there is a failure. A test case wasn't run if there
+      -- were no matches, so we don't award points in that case.
+      if null matches || not (all isSucces matches)
         then 0
-        else g
+        else weight
+    recurse path Criterion { nodes, weight, name, base } = weighted
+      where
+        weighted = withBase * weight
+        withBase = max (summed - base) 0 / (1 - base)
+        summed = sum grades
+        grades = recurse path' <$> nodes
+        path' = path <> [name]
 
     -- Check if a Path path matches the item path
     subpath :: Path -> ResultItem -> Bool
@@ -73,21 +89,10 @@ grade criteria result = check (expand criteria) (specResultItems result)
       let (q', n) = resultItemPath q
       p `isPrefixOf` (q' <> [n])
 
-    -- Expand criteria to a list of all tests paths and their weights
-    expand :: Criteria -> [(Float, Path)]
-    expand = expand' (1.0, [])
-      where
-        expand' :: (Float, Path) -> Criteria -> [(Float, Path)]
-        expand' tup [] = [tup]
-        expand' (g, p) [c] = recurse g p c
-        expand' (g, p) (c:cs) = recurse g p c <> expand' (g, p) cs
-
-        -- calculate the weigth, append name and recursively expand paths
-        recurse g p c = expand' (g * weight c, p <> [name c]) (nodes c)
-
--- | Do a sanity check on the criteria, returning
--- a path to the set of criteria that do not match
--- if this exists.
+-- | Sanity check of criteria.
+--
+-- Do a sanity check on the criteria, returning a path to the set of criteria
+-- that do not match if this exists.
 sanity :: Criteria -> Either [String] ()
 sanity cs
   | sane cs   = foldlM' (\_ -> sanity . nodes) cs
@@ -100,110 +105,114 @@ sanity cs
       where
         c x k z = left (name x :) (f z x) >>= k
 
--- | Check sanity (i.e. total weight of 1) of one
--- layer in the tree (so no recursive check)
--- Empty tree is always sane, as it is treated
--- as a pass or fail.
+-- | Check if this layer is sane.
+--
+-- Check sanity (i.e. total weight of 1) of one layer in the tree (so no
+-- recursive check) Empty tree is always sane, as it is treated as a pass or
+-- fail.
 sane :: Criteria -> Bool
 sane [] = True
-sane c  = all inRange weights && cmp total 1
+sane c  = all inRange bases && all inRange weights && cmp total 1
   where
     inRange f = 0 <= f && f <= 1
 
+    bases = fmap base c
+
     total = sum weights
-    weights = map weight c
+    weights = fmap weight c
 
     -- Adjust for floating point errors
     cmp x y = abs (x-y) < 0.0001
 
--- | We cannot stack monads on SpecM, because we cannot
--- call runSpecM on a SpecM Rubric (only on SpecM ()
--- which means there is no way to get the rubric out
--- of the WriterT monad when SpecM is stacked into
--- it...)
---
--- Hence, we have this cursed Monad instead.
-data RubricM s a = RubricM (Writer Criteria a) (SpecWith s)
+-- | Rubric monad.
+type RubricM r = WriterT Criteria (SpecM r)
 
 type Rubric = RubricM () ()
 
-instance Functor (RubricM s) where
-  fmap f (RubricM w s) = RubricM (f <$> w) s
+-- withIORef :: SpecM r a -> 
 
-instance Applicative (RubricM a) where
-  pure x = RubricM (pure x) (pure ())
-  (<*>) = undefined
-
-instance Monad (RubricM a) where
-  RubricM r s >>= f = RubricM r'' s''
-    where
-      ~(a, w ) = runWriter r
-      RubricM r' s' = f a
-      ~(b, w') = runWriter r'
-
-      r'' = writer (b, w <> w')
-      s''  = s >> s'
-
--- | Run the full rubric, this can be compared
--- to the hspec function.
+-- | Run the full rubric
+--
+-- This is analogous to the hspec function.
 hrubric :: Rubric -> IO (Maybe Float)
 hrubric rubric = do
+  -- Set up an IO ref to get the criteria out of the hspec. We do this because
+  -- hspec doesn't allow for non-unit type outputs when running the monad.
+  ref <- newIORef []
+  let spec = do
+        (a, criteria) <- runRubric rubric
+        runIO $ writeIORef ref criteria
+        return a
+
   args <- getArgs
   cfg <- readConfig defaultConfig args
-  let (criteria, spec) = evalRubricM rubric
-  (cfg', forest) <- liftIO $ evalSpec cfg spec
+  (cfg', forest) <- evalSpec cfg spec
   result <- liftIO . withArgs [] $ runSpecForest forest cfg'
+
+  criteria <- readIORef ref
+  let grades = flip grade result <$> criteria
   return $ if isJust (configFilterPredicate cfg <|> configSkipPredicate cfg)
     then empty
-    else return $ grade criteria result
+    else return $ sum grades
 
--- | Run the rubric monad
-runRubricM :: RubricM s a -> ((a, Criteria), SpecWith s)
-runRubricM (RubricM c s) = ((a, c'), s')
-  where
-    s' = case ret of
-      Right _ -> s
-      Left path -> runIO . fail $ "Sum of weight in child rubrics was not 1 for '" <> path <> "'"
-    (a, c') = runWriter c
-    ret = left (intercalate ".") $ sanity c'
+-- | Run the rubric monad. This incorporates a sanity check.
+runRubric :: RubricM s a -> SpecM s (a, Criteria)
+runRubric m = do
+  (a, criteria) <- runWriterT m
+  let check = left (intercalate ".") $ sanity criteria
+  case check of
+    Right _ -> return (a, criteria)
+    Left path -> runIO . fail $ "Sum of weight in child rubrics was not 1 for '" <> path <> "'"
 
 -- | Run the rubric monad, but get only the criteria
-evalRubricM :: RubricM s a -> (Criteria, SpecWith s)
-evalRubricM rubric = (c, s)
-  where
-    ((_, c), s) = runRubricM rubric
+evalRubric :: RubricM s a -> SpecM s Criteria
+evalRubric = fmap snd . runRubric
 
 -- | Set up a criterion in the rubric. Like HSpec `describe` but with points.
-criterion :: HasCallStack => String -> Float -> RubricM s a -> RubricM s a
-criterion n w (RubricM c s) = RubricM c' (describe n s)
-  where
-    (a, criteria) = runWriter c
-    c' = writer (a, [Criterion n w criteria])
+criterion :: HasCallStack => String -> Float -> RubricM s () -> RubricM s ()
+criterion name weight = bcriterion name weight 0
+
+-- | Set up a criterion with an additional baseline.
+bcriterion :: HasCallStack => String -> Float -> Float -> RubricM s () -> RubricM s ()
+bcriterion name weight base body = do
+  let runIO' = lift . runIO
+  ref <- runIO' . newIORef $ []
+  lift . describe name $ do
+    (_, criteria) <- runWriterT body
+    runIO $ writeIORef ref criteria
+  criteria <- runIO' . readIORef $ ref
+  tell [Criterion name weight base criteria]
 
 -- | A shorthand for a criterion where the points will be
 -- distributed later on by `distribute`. (this will award
 -- NaN points)
-dcriterion :: HasCallStack => String -> RubricM s a -> RubricM s a
+dcriterion :: HasCallStack => String -> RubricM s () -> RubricM s ()
 dcriterion = flip criterion (0/0)
 
 -- | A test that awards points. Like HSpec `it` but with points.
 passes :: (HasCallStack, Example s) => String -> Float -> s -> RubricM (Arg s) ()
-passes n w s = RubricM (writer ((), [crit])) (it n s)
-  where
-    crit = Criterion n w []
+passes n w = bpasses n w 0
+
+-- | Set up a test with an additional baseline.
+bpasses :: (HasCallStack, Example s) => String -> Float -> Float -> s -> RubricM (Arg s) ()
+bpasses name weight base body = do
+  tell [Criterion name weight base []]
+  lift $ it name body
 
 dpasses :: (HasCallStack, Example s) => String -> s -> RubricM (Arg s) ()
 dpasses = flip passes (0/0)
 
 -- | Distribute points among the current level of items.
 distribute :: RubricM s a -> RubricM s a
-distribute (RubricM r s) = RubricM (writer (a, criteria')) s
-  where
-    (a, criteria) = runWriter r
-    w = 1 / (fromIntegral . length) criteria
-    criteria' = map (\r' -> r' { weight = w }) criteria
+distribute body = do
+  let body' = runWriterT body
+  (a, criteria) <- lift body'
+  let weight = 1 / (fromIntegral . length) criteria
+  let criteria' = (\r -> r { weight = weight }) <$> criteria
+  tell criteria'
+  return a
 
 -- | A combinator that transforms an HSpec SpecWith into a pass-or-fail rubric.
 -- So this awards full points iff all tests passed.
 passOrFail :: SpecWith s -> RubricM s ()
-passOrFail = RubricM (writer ((), []))
+passOrFail = lift
